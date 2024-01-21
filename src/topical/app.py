@@ -35,7 +35,7 @@ MIN_ARTICLES_TO_AVOID_BACKOFF = 2  # If there are less than this number of clust
 BACKOFF_THRESHOLD = 0.02  # The amount to reduce the cosine similarity by during backoff
 
 # Prompt settings
-MODEL_MAX_LEN = 8100  # TODO: Artifically low because some prompt tokens are not accounted for in the total length
+MODEL_MAX_LEN = 16_000
 TOPIC_PAGE_MAX_LEN = 512
 
 # Debug settings
@@ -126,7 +126,7 @@ def preprocess_pubmed_articles(records: DictionaryElement) -> list[dict[str, str
     return articles
 
 
-@st.cache_resource(show_spinner="Loading encoder...")
+@st.cache_resource(show_spinner=False)
 def load_encoder():
     """Load an SPECTER-based text encoder for embedding titles and abstracts."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -171,7 +171,7 @@ def load_tiktokenizer(model_choice: str):
     return tiktoken.encoding_for_model(model_choice)
 
 
-@st.cache_data(max_entries=5)
+@st.cache_data(show_spinner=False, max_entries=5)
 def format_evidence(articles: list[dict[str, str]], clusters: list[list[int]], _tokenizer, prompt_len: int) -> str:
     """Format the supporting literature as a string for inclusion in the prompt."""
     curr_evidence_len = 0
@@ -239,9 +239,11 @@ def format_evidence(articles: list[dict[str, str]], clusters: list[list[int]], _
 
 
 @st.cache_resource(show_spinner=False)
-def load_llm(model_choice: str):
+def load_llm(
+    model_choice: str, echo: bool = False, caching: bool = True, max_streaming_tokens: int = TOPIC_PAGE_MAX_LEN
+):
     """Load an OpenAI large language model."""
-    return guidance.models.OpenAI(model_choice, echo=False, caching=True, max_streaming_tokens=TOPIC_PAGE_MAX_LEN)
+    return guidance.models.OpenAI(model_choice, echo=echo, caching=caching, max_streaming_tokens=max_streaming_tokens)
 
 
 def main():
@@ -249,10 +251,7 @@ def main():
         st.image("https://prior.allenai.org/assets/logos/ai2-logo-header.png", use_column_width=True)
 
         st.header("Settings")
-        st.write(
-            "Please provide an __OpenAI API key__. Modifying additional settings is optional, reasonable defaults"
-            " are provided."
-        )
+        st.write("Modifying settings is optional, reasonable defaults are provided.")
 
         st.subheader("OpenAI API")
         model_choice = st.text_input(
@@ -326,22 +325,24 @@ def main():
     st.caption('An example is provided for you (just hit "__Generate Topic Page__"!)')
     with st.expander("Search tips 💡"):
         st.write(
-            "For concrete entities that are likely to be mentioned precisely in the the literature"
-            ' (e.g. _"beta-D-Galactoside alpha 2-6-Sialyltransferase"_), a search strategy that works well is to'
-            " look for these mentions in paper titles: `<entity>[title] OR <synonym>[title]`. If the entity exists"
-            " in the [MeSH ontology](https://meshb.nlm.nih.gov/), try adding: `OR <entity>[MeSH Major Topic]`."
+            "TOPICAL supports the full syntax of the PubMed Advanced Search Builder, allowing you to, for example,"
+            " search papers that mention a certain __entity__ or __concept__ in the title, e.g. `<entity>[title]`,"
+            " or to easily include synonyms, e.g. `<entity> OR <synonym>`. However, in most cases simply entering"
+            " the entity verbatim will work well, as PubMed will apply 'automatic term mapping' (ATM) to this query"
+            " to include, among other things, matching MeSH descriptors and pluralization."
         )
 
         st.write(
-            "For more generic entities that are unlikely to be mentioned precisely"
-            ' (e.g. _"Single-Cell Gene Expression Analysis"_), try providing the entity by itself.'
-            " [PubMed](https://pubmed.ncbi.nlm.nih.gov/) will automatically expand your query to search for"
-            " synonyms and related MeSH terms."
+            "It is generally recommended to use the __Canonicalized name__ field to provide a canonicalized name"
+            " for your entity or concept of interest. This will not be used to query PubMed, but it can help keep"
+            " the model on track when generating topic pages, especially in cases where the entity has multiple,"
+            " potentially ambiguous names. If no canonicalized name is provided, the search query will be used"
+            " instead."
         )
 
     query = st.text_input(
         "Search query",
-        value="microplastic[title] OR microplastics[title] OR Microplastics[MeSH Major Topic]",
+        value="long covid",
         help=(
             "Enter a search query for your entity of interest. This supports the full syntax of the [PubMed"
             ' Advanced Search Builder](https://pubmed.ncbi.nlm.nih.gov/advanced/). See "_Search tips_" for more help.'
@@ -349,7 +350,7 @@ def main():
     ).strip()
     entity = st.text_input(
         "Canonicalized name",
-        value="Microplastics",
+        value='Post-acute COVID-19 Syndrome (PACS) or "long COVID"',
         help=(
             "Enter a canonicalized name for the entity. This will not be used to query PubMed, but it can help keep"
             " the model on track when generating topic pages, especially in cases where the entity has multiple,"
@@ -492,19 +493,16 @@ def main():
             clusters = clusters or [[i] for i in range(len(articles))]
 
             # Design a prompt to get GPT to generate topic pages
-            system_prompt = (PROMPT_DIR / "system.txt").read_text().format(domain="biomedical").strip()
+            system_prompt = (PROMPT_DIR / "system.txt").read_text().strip()
             instructions_prompt = (
                 (PROMPT_DIR / "instructions.txt")
                 .read_text()
                 .format(
-                    domain="biomedical",
                     end_year=end_year,
                     min_articles_to_cluster=MIN_ARTICLES_TO_CLUSTER,
                 )
             ).strip()
-            how_to_cite_prompt = (
-                (PROMPT_DIR / "how_to_cite.txt").read_text().format(id_database="PubMed", id_type="PMID")
-            ).strip()
+            how_to_cite_prompt = ((PROMPT_DIR / "how_to_cite.txt").read_text()).strip()
             topic_page_prompt = (PROMPT_DIR / "topic_page.txt").read_text().strip()
             publications_per_year = ", ".join(
                 f"{year}: {count}" for year, count in year_counts.items() if int(year) <= int(end_year)
@@ -565,18 +563,24 @@ def main():
 
             # Actually make the request to the API
             with st.spinner("Prompting model..."):
-                response = prompt(
-                    system_prompt=system_prompt,
-                    instructions_prompt=instructions_prompt,
-                    how_to_cite_prompt=how_to_cite_prompt,
-                    topic_page_prompt=topic_page_prompt,
-                    canonicalized_entity_name=entity,
-                    publications_per_year=publications_per_year,
-                    total_publications=total_publications,
-                    evidence=evidence,
-                    llm=llm,
-                    generate=True,
-                )
+                # TODO: Unclear why this ConstraintException is being thrown. It didn't happen in guidance <0.1.0.
+                try:
+                    response = prompt(
+                        system_prompt=system_prompt,
+                        instructions_prompt=instructions_prompt,
+                        how_to_cite_prompt=how_to_cite_prompt,
+                        topic_page_prompt=topic_page_prompt,
+                        canonicalized_entity_name=entity,
+                        publications_per_year=publications_per_year,
+                        total_publications=total_publications,
+                        evidence=evidence,
+                        llm=llm,
+                        generate=True,
+                    )
+                except Exception as e:
+                    st.error("Failed to generate topic page (see error below), please try again.")
+                    st.error(e)
+                    st.stop()
 
         if debug:
             st.info(f"__Evidence__:\n\n{evidence}")
