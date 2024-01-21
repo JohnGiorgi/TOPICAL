@@ -582,7 +582,6 @@ def main():
                 except Exception as e:
                     st.error("Failed to generate topic page (see error below), please try again.")
                     st.error(e)
-                    st.stop()
 
         if debug:
             st.info(f"__Evidence__:\n\n{evidence}")
@@ -625,6 +624,8 @@ def main():
                 file_name=f"{file_name}.json",
                 help="Download a JSON file containing the markdown formatted topic page and additional metadata.",
             )
+        else:
+            st.stop()
 
     "---"
 
