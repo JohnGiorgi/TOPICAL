@@ -256,7 +256,7 @@ def main():
         st.subheader("OpenAI API")
         model_choice = st.text_input(
             "Choose a model:",
-            value="gpt-4-0613",
+            value="gpt-4-1106-preview",
             help="Any valid model name for the OpenAI API. It is strongly recommended to use GPT-4.",
         )
         openai_api_key = st.text_input(
@@ -319,10 +319,11 @@ def main():
 
     st.write("# 🪄📄 TOPICAL: TOPIC pages AutomagicaLly")
     st.write(
-        "This demo generates the ability to produce topic pages for biomedical entities and concepts automatically."
-        " Enter a __entity__ or __concept__ of interest below, and a topic page will be generated."
+        "TOPICAL produces topic pages for biomedical entities and concepts automatically."
+        " Enter a __entity__ or __concept__ of interest below, and a topic page will be generated for you."
     )
-    st.caption('An example is provided for you (just hit "__Generate Topic Page__"!)')
+    st.caption('An example is provided, just hit: "__Generate Topic Page__"!')
+
     with st.expander("Search tips 💡"):
         st.write(
             "TOPICAL supports the full syntax of the PubMed Advanced Search Builder, allowing you to, for example,"
@@ -348,6 +349,7 @@ def main():
             ' Advanced Search Builder](https://pubmed.ncbi.nlm.nih.gov/advanced/). See "_Search tips_" for more help.'
         ),
     ).strip()
+
     entity = st.text_input(
         "Canonicalized name",
         value='Post-acute COVID-19 Syndrome (PACS) or "long COVID"',
@@ -563,7 +565,6 @@ def main():
 
             # Actually make the request to the API
             with st.spinner("Prompting model..."):
-                # TODO: Unclear why this ConstraintException is being thrown. It didn't happen in guidance <0.1.0.
                 try:
                     response = prompt(
                         system_prompt=system_prompt,
@@ -577,6 +578,7 @@ def main():
                         llm=llm,
                         generate=True,
                     )
+                # TODO: Unclear why ConstraintException is being thrown. It didn't happen in guidance <0.1.0.
                 except Exception as e:
                     st.error("Failed to generate topic page (see error below), please try again.")
                     st.error(e)
