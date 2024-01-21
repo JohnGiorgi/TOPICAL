@@ -49,10 +49,13 @@ PROMPT_DIR = Path(__file__).parents[1] / "prompts"
 Entrez.email = os.environ.get("ENTREZ_EMAIL")
 Entrez.api_key = os.environ.get("ENTREZ_API_KEY")
 
+# If running on Streamlit, we will cap the number of results to return in the search
+STREAMLIT = os.environ.get("STREAMLIT", False)
+
 random.seed(42)
 
 
-@st.cache_data(show_spinner=False, max_entries=5)
+@st.cache_data(show_spinner=False, max_entries=3)
 def plot_publications_per_year(records: DictionaryElement, end_year: str) -> dict[str, int]:
     """Plots a histogram of publications per year (up to an including end_year) in records and returns the counts."""
     pub_years = [int(nlm.get_year_from_medline_date(record["PubDate"])) for record in records]
@@ -67,7 +70,7 @@ def plot_publications_per_year(records: DictionaryElement, end_year: str) -> dic
     return year_counts
 
 
-@st.cache_data(show_spinner=False, max_entries=5)
+@st.cache_data(show_spinner=False, max_entries=3)
 def preprocess_pubmed_articles(records: DictionaryElement) -> list[dict[str, str | dict[str, str]]]:
     """Performs basic pre-processing of the articles in records and returns them as a list of dictionaries."""
     ptext = "{} / {} articles"
@@ -138,7 +141,7 @@ def load_encoder():
 
 
 @torch.no_grad()
-@st.cache_data(show_spinner=False, max_entries=5)
+@st.cache_data(show_spinner=False, max_entries=3)
 def embed_evidence(articles: list[str], _encoder, _tokenizer, _batch_size: int = 64):
     """Jointly embed the titles and abstracts in articles for the given encoder."""
     ptext = "{} / {} articles"
@@ -171,7 +174,7 @@ def load_tiktokenizer(model_choice: str):
     return tiktoken.encoding_for_model(model_choice)
 
 
-@st.cache_data(show_spinner=False, max_entries=5)
+@st.cache_data(show_spinner=False, max_entries=3)
 def format_evidence(articles: list[dict[str, str]], clusters: list[list[int]], _tokenizer, prompt_len: int) -> str:
     """Format the supporting literature as a string for inclusion in the prompt."""
     curr_evidence_len = 0
@@ -281,10 +284,13 @@ def main():
         retmax = st.number_input(
             "Maximum papers to consider",
             min_value=1,
-            max_value=10_000,
-            value=10_000,
+            max_value=2500 if STREAMLIT else 10_000,
+            value=2500 if STREAMLIT else 10_000,
             step=100,
-            help="Determines the maximium number of papers to consider, starting from most to least relevant.",
+            help=(
+                "Determines the maximium number of papers to consider, starting from most to least relevant."
+                " Will be artificially capped at 2500 if running from Streamlit."
+            ),
         )
 
         st.subheader("Clustering")
